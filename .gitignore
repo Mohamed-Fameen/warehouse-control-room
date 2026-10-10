@@ -1,0 +1,26 @@
+# Build output
+target/
+*.class
+
+# Secrets / local env
+.env
+*.env
+!*.env.example
+
+# IDEs
+.idea/
+*.iml
+.vscode/
+*.code-workspace
+
+# Web
+node_modules/
+dist/
+
+# Python
+__pycache__/
+.venv/
+
+# OS
+.DS_Store
+Thumbs.db
