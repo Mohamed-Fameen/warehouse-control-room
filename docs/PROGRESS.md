@@ -13,6 +13,15 @@ Template:
 
 ---
 
+## 2026-10-10 — services, infra — Phase 0
+**Done:**
+- `services/`: Maven multi-module (parent + `common`, `simulator`, `bridge`, `order-service`, `dispatcher`, `gateway`) on Spring Boot 3.5.16 / Java 21, with the Maven wrapper committed. `common` has `Topics` (MQTT topic templates, `robot.telemetry`) and the `RobotStatus` enum. Each service is an empty Boot app with actuator health, virtual threads, a fixed port (gateway 8080, simulator 8081, bridge 8082, order-service 8083, dispatcher 8084) and a Dockerfile. `./mvnw verify` passes.
+- `infra/compose/docker-compose.yml`: Mosquitto 2.0.22 (1883, ws 9001), Kafka 4.3.1 KRaft (host `localhost:9092`, internal `kafka:29092`), `kafka-init` creates `robot.telemetry` (6 partitions), RabbitMQ 4.3.6 with the management UI (5672/15672, `wcr`/`wcr` via `.env`), Redpanda Console v3.12.0 (8090). App services sit under the `apps` profile. Smoke-tested: all containers healthy, MQTT pub/sub works, topic created, gateway image builds and reports UP.
+- Root `Makefile` (`up`, `down`, `build`, `apps`, `logs`, `ps`), `README.md`, `.gitignore`, ADR `docs/decisions/0001-local-stack-and-service-skeleton.md`. Moved `PROGRESS.md` into `docs/`.
+
+**Next:** Phase 1. Simulator publishes telemetry to MQTT, then the bridge forwards it to Kafka `robot.telemetry`. Add a `RobotTelemetry` record to `common` first. Separately, scaffold the Vite React app under `web/` (not done this session).
+**Blockers / notes:** `make` is not installed on this Windows machine; install it (`winget install ezwinports.make`) or run the compose commands directly. When running `docker exec` from Git Bash, set `MSYS_NO_PATHCONV=1`, or Git Bash rewrites paths like `/opt/...`.
+
 ## 2026-10-10 — planning — Phase 0
 **Done:** Roadmap written; CLAUDE.md and this log created.
 **Next:** Create the repo skeleton: Maven multi-module under `services/`, Vite React app under `web/`, `infra/compose/docker-compose.yml` with Mosquitto, Kafka (KRaft), RabbitMQ and Redpanda Console.
