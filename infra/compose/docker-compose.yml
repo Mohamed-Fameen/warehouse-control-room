@@ -1,0 +1,125 @@
+name: warehouse-control-room
+
+# Infrastructure starts by default (`make up`).
+# Application services are under the `apps` profile until they do real work:
+#   docker compose --profile apps up -d --build
+
+services:
+  mosquitto:
+    image: eclipse-mosquitto:2.0.22
+    ports:
+      - "1883:1883"   # MQTT
+      - "9001:9001"   # MQTT over WebSockets
+    volumes:
+      - ./mosquitto/mosquitto.conf:/mosquitto/config/mosquitto.conf:ro
+      - mosquitto-data:/mosquitto/data
+    healthcheck:
+      test: ["CMD", "mosquitto_sub", "-t", "$$SYS/broker/uptime", "-C", "1", "-W", "3"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  kafka:
+    image: apache/kafka:4.3.1
+    ports:
+      - "9092:9092"   # host clients (IntelliJ runs) -> localhost:9092
+    environment:
+      CLUSTER_ID: 9v42JM1f6mq1a8ehYhOi1Q
+      KAFKA_NODE_ID: 1
+      KAFKA_PROCESS_ROLES: broker,controller
+      KAFKA_CONTROLLER_QUORUM_VOTERS: 1@kafka:9093
+      KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+      # INTERNAL is for containers (kafka:29092), HOST is for apps on your machine.
+      KAFKA_LISTENERS: INTERNAL://:29092,HOST://:9092,CONTROLLER://:9093
+      KAFKA_ADVERTISED_LISTENERS: INTERNAL://kafka:29092,HOST://localhost:9092
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: INTERNAL:PLAINTEXT,HOST:PLAINTEXT,CONTROLLER:PLAINTEXT
+      KAFKA_INTER_BROKER_LISTENER_NAME: INTERNAL
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+      KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0
+      KAFKA_LOG_DIRS: /var/lib/kafka/data
+    volumes:
+      - kafka-data:/var/lib/kafka/data
+    healthcheck:
+      test: ["CMD-SHELL", "/opt/kafka/bin/kafka-broker-api-versions.sh --bootstrap-server kafka:29092 > /dev/null 2>&1"]
+      interval: 10s
+      timeout: 10s
+      retries: 10
+      start_period: 15s
+
+  # One-shot: creates topics with explicit partition counts, then exits.
+  kafka-init:
+    image: apache/kafka:4.3.1
+    depends_on:
+      kafka:
+        condition: service_healthy
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - >
+        /opt/kafka/bin/kafka-topics.sh --bootstrap-server kafka:29092
+        --create --if-not-exists --topic robot.telemetry --partitions 6 --replication-factor 1
+    restart: "no"
+
+  rabbitmq:
+    image: rabbitmq:4.3.6-management
+    ports:
+      - "5672:5672"     # AMQP
+      - "15672:15672"   # management UI: http://localhost:15672
+    environment:
+      RABBITMQ_DEFAULT_USER: ${RABBITMQ_USER:-wcr}
+      RABBITMQ_DEFAULT_PASS: ${RABBITMQ_PASSWORD:-wcr}
+    volumes:
+      - rabbitmq-data:/var/lib/rabbitmq
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
+      interval: 10s
+      timeout: 10s
+      retries: 5
+
+  redpanda-console:
+    image: docker.redpanda.com/redpandadata/console:v3.12.0
+    ports:
+      - "8090:8080"   # http://localhost:8090
+    environment:
+      KAFKA_BROKERS: kafka:29092
+    depends_on:
+      kafka:
+        condition: service_healthy
+
+  # ---- Application services (profile: apps) ----
+
+  simulator:
+    profiles: ["apps"]
+    build: { context: ../../services, dockerfile: simulator/Dockerfile }
+    ports: ["8081:8081"]
+    depends_on: [mosquitto]
+
+  bridge:
+    profiles: ["apps"]
+    build: { context: ../../services, dockerfile: bridge/Dockerfile }
+    ports: ["8082:8082"]
+    depends_on: [mosquitto, kafka]
+
+  order-service:
+    profiles: ["apps"]
+    build: { context: ../../services, dockerfile: order-service/Dockerfile }
+    ports: ["8083:8083"]
+    depends_on: [rabbitmq, kafka]
+
+  dispatcher:
+    profiles: ["apps"]
+    build: { context: ../../services, dockerfile: dispatcher/Dockerfile }
+    ports: ["8084:8084"]
+    depends_on: [rabbitmq, mosquitto]
+
+  gateway:
+    profiles: ["apps"]
+    build: { context: ../../services, dockerfile: gateway/Dockerfile }
+    ports: ["8080:8080"]
+    depends_on: [kafka]
+
+volumes:
+  mosquitto-data:
+  kafka-data:
+  rabbitmq-data:
