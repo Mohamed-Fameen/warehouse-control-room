@@ -97,29 +97,21 @@ final class RobotRunner implements Runnable {
     }
 
     /**
-     * The first connect is retried here; after that the client's automatic reconnect takes over.
-     * Telemetry is dropped, not buffered, while disconnected.
+     * Starts connecting without waiting. Automatic reconnect also covers a failed first connect,
+     * and nothing is published until the client is connected. Telemetry is dropped, not buffered,
+     * while disconnected.
      */
-    private void connect() throws InterruptedException {
-        long backoffMs = 500;
-        while (true) {
-            try {
-                client.connectWith()
-                        .cleanStart(true)
-                        .keepAlive(10)
-                        .send()
-                        .get(10, TimeUnit.SECONDS);
-                log.debug("{} connected", robot.id());
-                return;
-            } catch (InterruptedException e) {
-                throw e;
-            } catch (Exception e) {
-                log.warn("{} cannot connect to MQTT ({}), retrying in {} ms",
-                        robot.id(), rootMessage(e), backoffMs);
-                Thread.sleep(backoffMs);
-                backoffMs = Math.min(backoffMs * 2, 10_000);
-            }
-        }
+    private void connect() {
+        client.connectWith()
+                .cleanStart(true)
+                .keepAlive(10)
+                .send()
+                .whenComplete((ack, error) -> {
+                    if (error != null) {
+                        log.warn("{} cannot reach MQTT yet ({}); retrying in the background",
+                                robot.id(), rootMessage(error));
+                    }
+                });
     }
 
     private void publishTelemetry(RobotStatus status) {
