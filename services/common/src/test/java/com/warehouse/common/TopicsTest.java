@@ -12,5 +12,6 @@ class TopicsTest {
         assertThat(Topics.robotStatus("dc1", "r-7")).isEqualTo("wh/dc1/robot/r-7/status");
         assertThat(Topics.robotCommand("dc1", "r-7")).isEqualTo("wh/dc1/robot/r-7/cmd");
         assertThat(Topics.allRobotTelemetry("dc1")).isEqualTo("wh/dc1/robot/+/telemetry");
+        assertThat(Topics.allRobotStatus(Topics.ANY_SITE)).isEqualTo("wh/+/robot/+/status");
     }
 }
