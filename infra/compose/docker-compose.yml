@@ -93,7 +93,12 @@ services:
     profiles: ["apps"]
     build: { context: ../../services, dockerfile: simulator/Dockerfile }
     ports: ["8081:8081"]
-    depends_on: [mosquitto]
+    environment:
+      MQTT_HOST: mosquitto
+      ROBOT_COUNT: ${ROBOT_COUNT:-20}
+    depends_on:
+      mosquitto:
+        condition: service_healthy
 
   bridge:
     profiles: ["apps"]
