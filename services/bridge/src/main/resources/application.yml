@@ -1,0 +1,15 @@
+spring:
+  application:
+    name: bridge
+  threads:
+    virtual:
+      enabled: true
+
+server:
+  port: ${PORT:8082}
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info
