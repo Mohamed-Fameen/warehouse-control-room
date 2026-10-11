@@ -34,3 +34,16 @@ docker exec warehouse-control-room-mosquitto-1 mosquitto_sub -v -t 'wh/dc1/robot
 ```
 
 Tuning lives under `simulator.*` in `services/simulator/src/main/resources/application.yml`.
+
+## MQTT to Kafka bridge
+
+Run `BridgeApplication` (or `docker compose -f infra/compose/docker-compose.yml --profile apps up -d simulator bridge`) with the infrastructure up. It forwards:
+
+| MQTT | Kafka | Key |
+|---|---|---|
+| `wh/+/robot/+/telemetry` (shared subscription, group `bridge`) | `robot.telemetry` | robot ID |
+| `wh/+/robot/+/status` (incl. retained) | `robot.status` (compacted) | robot ID |
+
+Payloads are forwarded unchanged, with the MQTT topic in the `mqtt_topic` header. Browse the topics in Redpanda Console (http://localhost:8090). Counters: http://localhost:8082/actuator/metrics/bridge.messages.forwarded
+
+`BridgeIntegrationTest` runs Mosquitto and Kafka in Testcontainers; it is skipped when Docker is not running.
