@@ -13,3 +13,23 @@ management:
     web:
       exposure:
         include: health,info
+
+simulator:
+  enabled: true
+  site: ${SITE:dc1}
+  robot-count: ${ROBOT_COUNT:20}
+  seed: 42
+  tick: 100ms                # physics step
+  telemetry-interval: 200ms  # 5 Hz per robot
+  mqtt:
+    host: ${MQTT_HOST:localhost}
+    port: ${MQTT_PORT:1883}
+  robot:
+    speed: 1.5               # m/s
+    drain-moving-per-sec: 0.3
+    drain-idle-per-sec: 0.02
+    charge-per-sec: 2.5
+    low-battery: 40          # worst-case job + trip to a charger is about 32%
+    charge-target: 95
+    pick-time: 3s
+    drop-time: 2s
