@@ -4,6 +4,16 @@ spring:
   threads:
     virtual:
       enabled: true
+  kafka:
+    bootstrap-servers: ${KAFKA_BOOTSTRAP_SERVERS:localhost:9092}
+    producer:
+      key-serializer: org.apache.kafka.common.serialization.StringSerializer
+      value-serializer: org.apache.kafka.common.serialization.ByteArraySerializer
+      compression-type: lz4
+      properties:
+        linger.ms: 10
+        # Sends run on the MQTT client thread; do not stall it for long if Kafka is down.
+        max.block.ms: 2000
 
 server:
   port: ${PORT:8082}
@@ -12,4 +22,12 @@ management:
   endpoints:
     web:
       exposure:
-        include: health,info
+        include: health,info,metrics
+
+bridge:
+  enabled: true
+  client-id: bridge-${HOSTNAME:local}
+  share-group: bridge
+  mqtt:
+    host: ${MQTT_HOST:localhost}
+    port: ${MQTT_PORT:1883}
