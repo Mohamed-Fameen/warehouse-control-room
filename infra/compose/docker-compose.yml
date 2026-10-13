@@ -117,6 +117,7 @@ services:
     environment:
       MQTT_HOST: mosquitto
       ROBOT_COUNT: ${ROBOT_COUNT:-20}
+      SIM_MODE: ${SIM_MODE:-dispatched}   # robots wait for the dispatcher; "autonomous" to roam alone
     depends_on:
       mosquitto:
         condition: service_healthy
@@ -159,7 +160,16 @@ services:
     profiles: ["apps"]
     build: { context: ../../services, dockerfile: dispatcher/Dockerfile }
     ports: ["8084:8084"]
-    depends_on: [rabbitmq, mosquitto]
+    environment:
+      MQTT_HOST: mosquitto
+      RABBITMQ_HOST: rabbitmq
+      RABBITMQ_USER: ${RABBITMQ_USER:-wcr}
+      RABBITMQ_PASSWORD: ${RABBITMQ_PASSWORD:-wcr}
+    depends_on:
+      mosquitto:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
 
   gateway:
     profiles: ["apps"]
