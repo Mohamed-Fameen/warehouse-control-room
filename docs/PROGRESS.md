@@ -13,6 +13,16 @@ Template:
 
 ---
 
+## 2026-10-14 — web, docs — Phase 1d
+**Done:**
+- `web/`: Vite + React + TypeScript app with React Three Fiber, drei and zustand. 3D warehouse from `GET /api/layout` (instanced racks, chargers, pack stations) and live robots from `/ws/fleet` (instanced, coloured by status, nose shows heading). Positions are interpolated 300 ms behind live from a per-robot sample buffer. Top bar with connection state and counts per status; fleet panel with battery bars; click a robot (in 3D or the list) for details. WebSocket reconnects with backoff.
+- Dev server proxies `/api` and `/ws` to the gateway (`GATEWAY_URL`, default `http://localhost:8080`). `?mock` runs a fake fleet in the browser with the same protocol, for working without the backend.
+- ADR 0006, README "Web UI" section. Built against the gateway contract in the README; no backend changes.
+- Checked in headless Chrome with `?mock` (renders, robots move) and without a gateway (waits and retries). **Not yet run against the real gateway**: Docker was not running this session.
+
+**Next:** run against the real stack and check interpolation looks smooth with real telemetry. Then Phase 2/3 panels: order board and DLQ (needs a gateway feed for `order.events`), chaos buttons.
+**Blockers / notes:** worked in a separate git worktree (`../wcr-web`, branch `phase-1d-web`, based on `phase-2a-orders`) because the services session had uncommitted work in the main checkout.
+
 ## 2026-10-13 — services, infra — Phase 2a
 **Done:**
 - **`services/common` changed:** `PickJobMessage` (jobId, orderId, sku, qty, pick cell, createdAt), `OrderEvent` + `OrderEventType` (`ORDER_CREATED`, `JOB_CREATED`), `Queues` (RabbitMQ names), `Topics.KAFKA_ORDER_EVENTS`.

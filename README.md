@@ -68,3 +68,15 @@ curl -X PUT localhost:8083/api/generator -H 'content-type: application/json' -d 
 
 Each order line becomes a pick job on RabbitMQ `pick-jobs` (see the queues at http://localhost:15672). Events go to Kafka `order.events`. Both are sent through a transactional outbox, so a broker outage delays messages but never loses them. Valid SKUs are `SKU-0001` to `SKU-0256`, one per pick spot. Postgres: `localhost:5432`, database `orders`, `wcr`/`wcr`.
 
+
+## Web UI
+
+React + React Three Fiber in `web/`. Needs Node 20+.
+
+```sh
+cd web
+npm install
+npm run dev        # http://localhost:5173, proxies /api and /ws to the gateway on :8080
+```
+
+Open http://localhost:5173/?mock to run without the backend: an in-browser fake fleet speaks the same protocol as the gateway. Set `GATEWAY_URL` to proxy to a gateway elsewhere. See ADR 0006.
