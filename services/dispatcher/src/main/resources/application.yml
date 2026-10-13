@@ -4,6 +4,18 @@ spring:
   threads:
     virtual:
       enabled: true
+  rabbitmq:
+    host: ${RABBITMQ_HOST:localhost}
+    port: 5672
+    username: ${RABBITMQ_USER:wcr}
+    password: ${RABBITMQ_PASSWORD:wcr}
+    connection-timeout: 3s
+    listener:
+      simple:
+        # Jobs stay unacked until done, so prefetch = most jobs one dispatcher holds at once.
+        prefetch: ${PREFETCH:40}
+        # The order service declares the queue; until it has, keep retrying instead of failing.
+        missing-queues-fatal: false
 
 server:
   port: ${PORT:8084}
@@ -13,3 +25,17 @@ management:
     web:
       exposure:
         include: health,info
+
+dispatcher:
+  site: ${SITE:dc1}
+  client-id: dispatcher-${HOSTNAME:${random.uuid}}
+  mqtt:
+    host: ${MQTT_HOST:localhost}
+    port: ${MQTT_PORT:1883}
+  tick: 100ms
+  assign-timeout: 5s       # no ACCEPTED/REJECTED by then: try another robot
+  job-timeout: 3m          # a job running longer than this is requeued
+  min-battery: 45          # robots refuse jobs at or below 40
+  stale-after: 5s          # no telemetry for this long: do not assign to the robot
+  reject-cooldown: 5s      # skip a robot this long after it rejects or ignores a job
+  completed-memory: 10m    # remember completed job IDs to ack redeliveries of finished jobs

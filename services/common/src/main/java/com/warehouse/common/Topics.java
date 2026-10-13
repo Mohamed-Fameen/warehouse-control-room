@@ -26,6 +26,11 @@ public final class Topics {
         return "wh/%s/robot/%s/cmd".formatted(site, robotId);
     }
 
+    /** MQTT: job progress ({@link RobotJobUpdate}), QoS 1, retained except rejections. */
+    public static String robotJob(String site, String robotId) {
+        return "wh/%s/robot/%s/job".formatted(site, robotId);
+    }
+
     /** MQTT wildcard for every robot's telemetry at a site. */
     public static String allRobotTelemetry(String site) {
         return "wh/%s/robot/+/telemetry".formatted(site);
@@ -34,6 +39,11 @@ public final class Topics {
     /** MQTT wildcard for every robot's status at a site. */
     public static String allRobotStatus(String site) {
         return "wh/%s/robot/+/status".formatted(site);
+    }
+
+    /** MQTT wildcard for every robot's job progress at a site. */
+    public static String allRobotJobs(String site) {
+        return "wh/%s/robot/+/job".formatted(site);
     }
 
     /** Kafka: robot telemetry, keyed by robot ID. */
