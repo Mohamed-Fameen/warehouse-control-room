@@ -1,12 +1,12 @@
 package com.warehouse.simulator.fleet;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.warehouse.common.layout.Cell;
+import com.warehouse.common.layout.WarehouseGrid;
 import com.warehouse.simulator.SimulatorProperties;
-import com.warehouse.simulator.world.Cell;
 import com.warehouse.simulator.world.ChargerPool;
 import com.warehouse.simulator.world.Robot;
 import com.warehouse.simulator.world.RobotSpec;
-import com.warehouse.simulator.world.WarehouseGrid;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.SplittableRandom;

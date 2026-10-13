@@ -1,5 +1,6 @@
 package com.warehouse.simulator.world;
 
+import com.warehouse.common.layout.Cell;
 import java.util.Comparator;
 import java.util.HashSet;
 import java.util.List;

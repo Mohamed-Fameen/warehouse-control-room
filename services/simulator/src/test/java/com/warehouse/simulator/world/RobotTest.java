@@ -3,6 +3,8 @@ package com.warehouse.simulator.world;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import com.warehouse.common.RobotStatus;
+import com.warehouse.common.layout.Cell;
+import com.warehouse.common.layout.WarehouseGrid;
 import java.util.EnumSet;
 import java.util.Set;
 import java.util.SplittableRandom;

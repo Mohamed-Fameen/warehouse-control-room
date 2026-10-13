@@ -13,6 +13,36 @@ Template:
 
 ---
 
+## 2026-10-13 — services, infra — Phase 2a
+**Done:**
+- **`services/common` changed:** `PickJobMessage` (jobId, orderId, sku, qty, pick cell, createdAt), `OrderEvent` + `OrderEventType` (`ORDER_CREATED`, `JOB_CREATED`), `Queues` (RabbitMQ names), `Topics.KAFKA_ORDER_EVENTS`.
+- `services/order-service`: orders and pick jobs in PostgreSQL (plain JDBC + Flyway). One job per order line; SKUs map 1:1 to pick spots (`SKU-0001` to `SKU-0256`). A transactional outbox relays jobs to RabbitMQ `wh.jobs` → quorum queue `pick-jobs` (delivery limit 5, dead letters to `pick-jobs.dlq`) and events to Kafka `order.events` keyed by order ID. Delivery is at least once, ordered per destination; publisher confirms on both brokers. A random order generator (default 6/min, `PUT /api/generator`) is the hook for Phase 3 rush hour. See ADR 0005 and the README "Order service" section.
+- Services run in UTC (`postgres:17.9` rejects `Asia/Calcutta`); tests run with `-Duser.timezone=UTC`.
+- **Shared infra changed:** compose adds Postgres 17.9, the `order.events` topic, and the order-service entry.
+
+**Next:** Phase 2b, the dispatcher: consume `pick-jobs`, assign each job to an idle robot, and send it over MQTT `.../cmd`. The simulator must accept commands instead of picking random jobs.
+**Blockers / notes:** Nothing consumes `pick-jobs` yet, so jobs pile up in the queue while the generator runs. Set `ORDERS_PER_MINUTE=0` if that gets in the way.
+
+## 2026-10-13 — services, infra — Phase 1c
+**Done:**
+- `services/gateway`: reads Kafka `robot.status` from the beginning (compacted) and `robot.telemetry` from the end, with no consumer group (every replica needs every robot). Merges both into one view per robot. Telemetry older than an `OFFLINE` status is ignored, so a clean shutdown cannot revive a robot.
+- `GET /api/layout` (floor plan in metres, racks as rectangles), `GET /api/robots`, and WebSocket `/ws/fleet`: a `snapshot` on connect, then a `delta` every 100 ms with only the robots that changed. Each robot in a delta is complete; the client upserts by `id`. Slow clients are disconnected and get a fresh snapshot when they reconnect. See ADR 0004 and the README "Gateway" section.
+- **`services/common` changed:** the warehouse layout moved from the simulator to `com.warehouse.common.layout` (`WarehouseGrid`, `Cell`, `Rect`). Simulator behaviour is unchanged.
+- **Shared infra changed:** the gateway's compose entry is wired to Kafka.
+- Measured with 20 robots: 9.6 deltas/s, about 15 KB/s per browser, telemetry age in the browser p50 76 ms, p95 108 ms.
+
+**Next:** web session: build the 3D UI against `/api/layout` and `/ws/fleet`. Services session: Phase 2a, the order service.
+**Blockers / notes:** **Contract for the web session:** the gateway message shapes in the README "Gateway" section. Position fields can be `null` for a robot known only from its status. Allowed origins default to any localhost port and must be narrowed before the public launch.
+
+## 2026-10-11 — services, infra — Phase 1b
+**Done:**
+- `services/bridge`: subscribes to `$share/bridge/wh/+/robot/+/telemetry` and `wh/+/robot/+/status`, produces to Kafka `robot.telemetry` and a new compacted `robot.status` topic, keyed by robot ID. Payloads are forwarded unparsed; the MQTT topic goes in the `mqtt_topic` header. See ADR 0003.
+- Uses clean MQTT sessions: with persistent sessions, Mosquitto kept routing a stopped replica's share of telemetry to it, and that share was lost.
+- **Shared infra changed:** `kafka-init` creates the compacted `robot.status` topic; the bridge's compose entry is wired to Mosquitto and Kafka.
+
+**Next:** Phase 1c, the gateway (Kafka to browser over WebSocket).
+**Blockers / notes:** Status changes that happen while the bridge is down are not replayed one by one; the retained MQTT status brings back the latest state on reconnect.
+
 ## 2026-10-11 — services, infra — Phase 1a
 **Done:**
 - **`services/common` changed:** added `RobotTelemetry` (robotId, site, seq, ts, x, y, heading, speed, battery, status) and `RobotStatusMessage` (robotId, status, ts) records. Units are in the Javadoc: metres from the south-west corner, radians counter-clockwise from +x, battery in percent, epoch-millisecond timestamps.

@@ -1,4 +1,4 @@
-package com.warehouse.simulator.world;
+package com.warehouse.common.layout;
 
 import java.util.ArrayDeque;
 import java.util.ArrayList;
@@ -27,15 +27,24 @@ public final class WarehouseGrid {
     private final int width;
     private final int height;
     private final boolean[][] shelf;
+    private final List<Rect> racks;
     private final List<Cell> chargers;
     private final List<Cell> packStations;
     private final List<Cell> pickSpots;
 
-    private WarehouseGrid(int width, int height, boolean[][] shelf,
+    private WarehouseGrid(int width, int height, List<Rect> racks,
                           List<Cell> chargers, List<Cell> packStations) {
         this.width = width;
         this.height = height;
-        this.shelf = shelf;
+        this.racks = List.copyOf(racks);
+        this.shelf = new boolean[width][height];
+        for (Rect rack : racks) {
+            for (int x = rack.x(); x < rack.x() + rack.width(); x++) {
+                for (int y = rack.y(); y < rack.y() + rack.height(); y++) {
+                    shelf[x][y] = true;
+                }
+            }
+        }
         this.chargers = List.copyOf(chargers);
         this.packStations = List.copyOf(packStations);
         this.pickSpots = List.copyOf(findPickSpots());
@@ -45,14 +54,11 @@ public final class WarehouseGrid {
     public static WarehouseGrid standard() {
         int width = 40;
         int height = 26;
-        boolean[][] shelf = new boolean[width][height];
-        int[][] bands = {{4, 11}, {14, 21}};
+        List<Rect> racks = new ArrayList<>();
+        int[] bandStarts = {4, 14};
         for (int x0 = 4; x0 + 1 < width - 4; x0 += 4) {
-            for (int[] band : bands) {
-                for (int y = band[0]; y <= band[1]; y++) {
-                    shelf[x0][y] = true;
-                    shelf[x0 + 1][y] = true;
-                }
+            for (int y0 : bandStarts) {
+                racks.add(new Rect(x0, y0, 2, 8));
             }
         }
 
@@ -69,7 +75,7 @@ public final class WarehouseGrid {
         for (int x = 4; x < width; x += 6) {
             packStations.add(new Cell(x, height - 2));
         }
-        return new WarehouseGrid(width, height, shelf, chargers, packStations);
+        return new WarehouseGrid(width, height, racks, chargers, packStations);
     }
 
     public int width() {
@@ -86,6 +92,11 @@ public final class WarehouseGrid {
 
     public boolean isWalkable(int x, int y) {
         return inBounds(x, y) && !shelf[x][y];
+    }
+
+    /** Shelf racks; every shelf cell belongs to exactly one. */
+    public List<Rect> racks() {
+        return racks;
     }
 
     public List<Cell> chargers() {

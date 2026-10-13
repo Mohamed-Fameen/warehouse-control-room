@@ -1,4 +1,4 @@
-package com.warehouse.simulator.world;
+package com.warehouse.common.layout;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -39,6 +39,20 @@ class WarehouseGridTest {
         for (Cell spot : grid.pickSpots()) {
             assertThat(grid.path(start, spot)).isNotNull();
         }
+    }
+
+    @Test
+    void racksCoverExactlyTheShelfCells() {
+        assertThat(grid.racks()).hasSize(16);
+        int shelfCells = 0;
+        for (int x = 0; x < grid.width(); x++) {
+            for (int y = 0; y < grid.height(); y++) {
+                if (grid.isShelf(x, y)) {
+                    shelfCells++;
+                }
+            }
+        }
+        assertThat(shelfCells).isEqualTo(grid.racks().stream().mapToInt(r -> r.width() * r.height()).sum());
     }
 
     @Test
