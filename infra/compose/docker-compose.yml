@@ -62,6 +62,8 @@ services:
         && /opt/kafka/bin/kafka-topics.sh --bootstrap-server kafka:29092
         --create --if-not-exists --topic robot.status --partitions 6 --replication-factor 1
         --config cleanup.policy=compact
+        && /opt/kafka/bin/kafka-topics.sh --bootstrap-server kafka:29092
+        --create --if-not-exists --topic order.events --partitions 6 --replication-factor 1
     restart: "no"
 
   rabbitmq:
@@ -79,6 +81,22 @@ services:
       interval: 10s
       timeout: 10s
       retries: 5
+
+  postgres:
+    image: postgres:17.9
+    ports:
+      - "5432:5432"
+    environment:
+      POSTGRES_DB: orders
+      POSTGRES_USER: ${POSTGRES_USER:-wcr}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-wcr}
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d orders"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
 
   redpanda-console:
     image: docker.redpanda.com/redpandadata/console:v3.12.0
@@ -120,7 +138,22 @@ services:
     profiles: ["apps"]
     build: { context: ../../services, dockerfile: order-service/Dockerfile }
     ports: ["8083:8083"]
-    depends_on: [rabbitmq, kafka]
+    environment:
+      DB_URL: jdbc:postgresql://postgres:5432/orders
+      DB_USER: ${POSTGRES_USER:-wcr}
+      DB_PASSWORD: ${POSTGRES_PASSWORD:-wcr}
+      RABBITMQ_HOST: rabbitmq
+      RABBITMQ_USER: ${RABBITMQ_USER:-wcr}
+      RABBITMQ_PASSWORD: ${RABBITMQ_PASSWORD:-wcr}
+      KAFKA_BOOTSTRAP_SERVERS: kafka:29092
+      ORDERS_PER_MINUTE: ${ORDERS_PER_MINUTE:-6}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+      kafka-init:
+        condition: service_completed_successfully
 
   dispatcher:
     profiles: ["apps"]
@@ -139,6 +172,7 @@ services:
         condition: service_completed_successfully
 
 volumes:
+  postgres-data:
   mosquitto-data:
   kafka-data:
   rabbitmq-data:
