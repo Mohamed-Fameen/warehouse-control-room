@@ -13,6 +13,16 @@ Template:
 
 ---
 
+## 2026-10-13 — services, infra — Phase 2a
+**Done:**
+- **`services/common` changed:** `PickJobMessage` (jobId, orderId, sku, qty, pick cell, createdAt), `OrderEvent` + `OrderEventType` (`ORDER_CREATED`, `JOB_CREATED`), `Queues` (RabbitMQ names), `Topics.KAFKA_ORDER_EVENTS`.
+- `services/order-service`: orders and pick jobs in PostgreSQL (plain JDBC + Flyway). One job per order line; SKUs map 1:1 to pick spots (`SKU-0001` to `SKU-0256`). A transactional outbox relays jobs to RabbitMQ `wh.jobs` → quorum queue `pick-jobs` (delivery limit 5, dead letters to `pick-jobs.dlq`) and events to Kafka `order.events` keyed by order ID. Delivery is at least once, ordered per destination; publisher confirms on both brokers. A random order generator (default 6/min, `PUT /api/generator`) is the hook for Phase 3 rush hour. See ADR 0005 and the README "Order service" section.
+- Services run in UTC (`postgres:17.9` rejects `Asia/Calcutta`); tests run with `-Duser.timezone=UTC`.
+- **Shared infra changed:** compose adds Postgres 17.9, the `order.events` topic, and the order-service entry.
+
+**Next:** Phase 2b, the dispatcher: consume `pick-jobs`, assign each job to an idle robot, and send it over MQTT `.../cmd`. The simulator must accept commands instead of picking random jobs.
+**Blockers / notes:** Nothing consumes `pick-jobs` yet, so jobs pile up in the queue while the generator runs. Set `ORDERS_PER_MINUTE=0` if that gets in the way.
+
 ## 2026-10-13 — services, infra — Phase 1c
 **Done:**
 - `services/gateway`: reads Kafka `robot.status` from the beginning (compacted) and `robot.telemetry` from the end, with no consumer group (every replica needs every robot). Merges both into one view per robot. Telemetry older than an `OFFLINE` status is ignored, so a clean shutdown cannot revive a robot.
