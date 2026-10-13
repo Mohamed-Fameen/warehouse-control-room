@@ -4,6 +4,9 @@ spring:
   threads:
     virtual:
       enabled: true
+  # autonomous: robots pick random shelves on their own, no other services needed
+  # dispatched: robots wait for jobs from the dispatcher (compose sets this)
+  mode: ${SIM_MODE:autonomous}
 
 server:
   port: ${PORT:8081}
