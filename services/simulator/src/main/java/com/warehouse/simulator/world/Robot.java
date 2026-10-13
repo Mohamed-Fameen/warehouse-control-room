@@ -74,7 +74,7 @@ public final class Robot {
         this.chargers = chargers;
         this.spec = spec;
         this.random = random;
-        this.mode = mode;
+        this.mode = mode == null ? Mode.AUTONOMOUS : mode;
         this.x = dock.centerX();
         this.y = dock.centerY();
         this.heading = Math.PI / 2;
