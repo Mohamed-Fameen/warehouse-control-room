@@ -132,7 +132,11 @@ services:
     profiles: ["apps"]
     build: { context: ../../services, dockerfile: gateway/Dockerfile }
     ports: ["8080:8080"]
-    depends_on: [kafka]
+    environment:
+      KAFKA_BOOTSTRAP_SERVERS: kafka:29092
+    depends_on:
+      kafka-init:
+        condition: service_completed_successfully
 
 volumes:
   mosquitto-data:

@@ -47,3 +47,12 @@ Run `BridgeApplication` (or `docker compose -f infra/compose/docker-compose.yml 
 Payloads are forwarded unchanged, with the MQTT topic in the `mqtt_topic` header. Browse the topics in Redpanda Console (http://localhost:8090). Counters: http://localhost:8082/actuator/metrics/bridge.messages.forwarded
 
 `BridgeIntegrationTest` runs Mosquitto and Kafka in Testcontainers; it is skipped when Docker is not running.
+
+## Gateway (Kafka to browser)
+
+Run `GatewayApplication` (or add `gateway` to the compose command above). Port 8080.
+
+- `GET /api/layout`: floor plan in metres: `width`, `height`, `racks` (`x`, `y`, `width`, `height`), `chargers` and `packStations` (cells; centre at `x + 0.5`, `y + 0.5`).
+- `GET /api/robots`: current state of every robot (same shape as the snapshot below).
+- `ws://localhost:8080/ws/fleet`: `{"type":"snapshot","ts":…,"robots":[…]}` once on connect, then `{"type":"delta","ts":…,"robots":[…]}` up to 10×/s, holding only changed robots. Each robot: `id, x, y, heading, speed, battery, status, lastSeen, statusTs`. Upsert by `id`. Position fields are `null` for a robot known only from its status (for example offline before the gateway started).
+
