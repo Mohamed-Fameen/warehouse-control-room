@@ -8,6 +8,10 @@ import java.util.UUID;
 /** API shape of an order with its pick jobs. */
 public record OrderView(UUID id, String status, Instant createdAt, List<Job> jobs) {
 
-    public record Job(UUID id, String sku, int qty, Cell pick, String status) {
+    /**
+     * @param robotId robot on the current attempt, if any
+     * @param reason  why the last attempt failed, or why the job was dead-lettered
+     */
+    public record Job(UUID id, String sku, int qty, Cell pick, String status, String robotId, int attempt, String reason) {
     }
 }
