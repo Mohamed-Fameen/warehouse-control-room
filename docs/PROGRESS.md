@@ -13,6 +13,18 @@ Template:
 
 ---
 
+## 2026-10-14 — services, infra — Phase 2c
+**Done:**
+- **`services/common` changed:** `JobEvent` + `JobEventType` on a new Kafka topic `job.events` (keyed by order ID). `OrderEvent` gained `robotId` and `reason`. `OrderEventType` gained `ORDER_STARTED`, `ORDER_COMPLETED`, `ORDER_FAILED`, `JOB_ASSIGNED`, `JOB_PICKED`, `JOB_REQUEUED`, `JOB_COMPLETED`, `JOB_FAILED`.
+- `services/dispatcher`: publishes every job step to `job.events`. A job is acked (or dead-lettered) only after Kafka confirms its final event; the publish is retried while Kafka is down. Dead-letters jobs itself after `MAX_ATTEMPTS` (default 3, counted from `x-delivery-count`).
+- `services/order-service`: consumes `job.events` (group `order-service`) and updates job and order status idempotently (Flyway V2 adds `robot_id`, `attempt`, `reason`). Each real change becomes one `order.events` event through the outbox. `GET /api/orders` now shows `robotId`, `attempt` and `reason` per job.
+- `services/gateway`: order board from `order.events` (starts 30 min back), `GET /api/orders` and **new** `ws://…/ws/orders` (snapshot, then deltas). `/ws/fleet` is unchanged. See ADR 0007 and the README "Gateway" section.
+- **Shared infra changed:** `kafka-init` creates `job.events`; the dispatcher gets Kafka and `MAX_ATTEMPTS`.
+- Tested: board, idempotency and order-flow tests (including duplicates, a late event from an earlier attempt, a requeue and a dead-letter, through real Kafka and Postgres in Testcontainers). In compose, orders go `NEW` → `IN_PROGRESS` → `COMPLETED` on the board. With `MAX_ATTEMPTS=1` and the simulator killed, 11 jobs went to the DLQ and their orders showed `FAILED` with the reason.
+
+**Next:** **Web session:** build the order board against `/ws/orders` (contract in the README). Services: Phase 3, the chaos control room: REST endpoints for rush hour (generator rate), breaking a robot, killing a dispatcher; a DLQ view with replay.
+**Blockers / notes:** A dispatcher restart uses up one attempt for each job it held (RabbitMQ counts the redelivery). My local Postgres has orders stuck in `NEW` because I purged their test jobs from RabbitMQ; `docker compose down -v` resets everything.
+
 ## 2026-10-14 — services, infra — Phase 2b
 **Done:**
 - **`services/common` changed:** `RobotCommand` (`ASSIGN_JOB`, jobId, pick cell), `RobotJobUpdate` + `RobotJobState` (`ACCEPTED`, `REJECTED`, `PICKED`, `COMPLETED`, `FAILED`), `Topics.robotJob` / `allRobotJobs`. **New MQTT topic** `wh/{site}/robot/{id}/job` (QoS 1, retained except `REJECTED`).
