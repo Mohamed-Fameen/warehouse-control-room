@@ -194,7 +194,7 @@ class OrderFlowIntegrationTest {
 
         publish(
                 jobEvent(JobEventType.JOB_ASSIGNED, order, a, "r-01", null, 3),
-                jobEvent(JobEventType.JOB_DEAD_LETTERED, order, a, "r-01", "r-01 failed it: battery empty (attempt 3 of 3)", 3),
+                jobEvent(JobEventType.JOB_DEAD_LETTERED, order, a, "r-01", "r-01 failed it: battery empty (attempt 3, limit 3)", 3),
                 jobEvent(JobEventType.JOB_ASSIGNED, order, b, "r-02", null, 1),
                 jobEvent(JobEventType.JOB_COMPLETED, order, b, "r-02", null, 1));
 

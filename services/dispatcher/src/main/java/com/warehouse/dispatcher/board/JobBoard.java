@@ -380,7 +380,7 @@ public final class JobBoard {
         if (attempt >= settings.maxAttempts()) {
             log.warn("Dead-lettering {} after {} attempts: {}", entry.job().jobId(), attempt, reason);
             finish(entry, Outcome.DEAD_LETTER, event(JobEventType.JOB_DEAD_LETTERED, entry, entry.robotId,
-                    "%s (attempt %d of %d)".formatted(reason, attempt, settings.maxAttempts())));
+                    "%s (attempt %d, limit %d)".formatted(reason, attempt, settings.maxAttempts())));
             return;
         }
         log.info("Requeueing {}: {}", entry.job().jobId(), reason);

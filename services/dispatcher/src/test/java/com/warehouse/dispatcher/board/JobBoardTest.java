@@ -360,7 +360,7 @@ class JobBoardTest {
         assertThat(d.requeues).isZero();
         JobEvent last = published.getLast();
         assertThat(last.type()).isEqualTo(JobEventType.JOB_DEAD_LETTERED);
-        assertThat(last.reason()).contains("attempt 3 of 3");
+        assertThat(last.reason()).contains("attempt 3, limit 3");
     }
 
     @Test
