@@ -52,6 +52,9 @@ public final class Topics {
     /** Kafka: robot status changes, keyed by robot ID. Compacted: keeps the latest status per robot. */
     public static final String KAFKA_ROBOT_STATUS = "robot.status";
 
+    /** Kafka: job facts from dispatchers ({@link JobEvent}), keyed by order ID. Read by the order service. */
+    public static final String KAFKA_JOB_EVENTS = "job.events";
+
     /** Kafka: order domain events ({@link OrderEvent}), keyed by order ID. Written via the order service's outbox. */
     public static final String KAFKA_ORDER_EVENTS = "order.events";
 }
