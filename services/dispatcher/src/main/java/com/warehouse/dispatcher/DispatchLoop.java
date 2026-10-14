@@ -1,6 +1,7 @@
 package com.warehouse.dispatcher;
 
 import com.warehouse.dispatcher.board.JobBoard;
+import com.warehouse.dispatcher.messaging.JobEventProducer;
 import com.warehouse.dispatcher.messaging.MqttLink;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.Executors;
@@ -29,9 +30,12 @@ public class DispatchLoop implements SmartLifecycle {
     private final DispatcherProperties props;
     private volatile boolean running;
 
-    public DispatchLoop(DispatcherProperties props, MqttLink mqtt) {
+    public DispatchLoop(DispatcherProperties props, MqttLink mqtt, JobEventProducer producer) {
         this.props = props;
-        this.board = new JobBoard(props.boardSettings(), mqtt::sendCommand);
+        // Publish confirmations come back on Kafka's thread; hand them to the loop like any other input.
+        JobBoard.EventPublisher events = (event, confirmed) -> producer.send(event)
+                .whenComplete((result, error) -> submit(board -> confirmed.accept(error == null)));
+        this.board = new JobBoard(props.boardSettings(), mqtt::sendCommand, events);
         mqtt.onMessage(this::submit);
     }
 

@@ -16,6 +16,17 @@ spring:
         prefetch: ${PREFETCH:40}
         # The order service declares the queue; until it has, keep retrying instead of failing.
         missing-queues-fatal: false
+  kafka:
+    bootstrap-servers: ${KAFKA_BOOTSTRAP_SERVERS:localhost:9092}
+    producer:
+      key-serializer: org.apache.kafka.common.serialization.StringSerializer
+      value-serializer: org.apache.kafka.common.serialization.StringSerializer
+      acks: all
+      compression-type: lz4
+      properties:
+        max.block.ms: 1000      # sends run on the dispatch loop; never stall it long when Kafka is down
+        delivery.timeout.ms: 10000
+        request.timeout.ms: 5000
 
 server:
   port: ${PORT:8084}
@@ -39,3 +50,4 @@ dispatcher:
   stale-after: 5s          # no telemetry for this long: do not assign to the robot
   reject-cooldown: 5s      # skip a robot this long after it rejects or ignores a job
   completed-memory: 10m    # remember completed job IDs to ack redeliveries of finished jobs
+  max-attempts: ${MAX_ATTEMPTS:3}   # failed attempts before a job is dead-lettered

@@ -2,6 +2,8 @@ package com.warehouse.dispatcher.board;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
+import com.warehouse.common.JobEvent;
+import com.warehouse.common.JobEventType;
 import com.warehouse.common.PickJobMessage;
 import com.warehouse.common.RobotCommand;
 import com.warehouse.common.RobotJobState;
@@ -19,19 +21,36 @@ class JobBoardTest {
 
     private static final JobBoard.Settings SETTINGS = new JobBoard.Settings(
             Duration.ofSeconds(5), Duration.ofMinutes(3), 45, Duration.ofSeconds(5),
-            Duration.ofSeconds(5), Duration.ofMinutes(10));
+            Duration.ofSeconds(5), Duration.ofMinutes(10), 3);
 
     private record Sent(String robotId, RobotCommand command) {
     }
 
     private static final class FakeDelivery implements JobBoard.Delivery {
         final PickJobMessage job;
+        final int attempt;
         boolean open = true;
         int acks;
         int requeues;
+        int deadLetters;
 
         FakeDelivery(String jobId, Cell pick) {
+            this(jobId, pick, 1);
+        }
+
+        FakeDelivery(String jobId, Cell pick, int attempt) {
             this.job = new PickJobMessage(jobId, "order-1", "SKU-0001", 1, pick, 0);
+            this.attempt = attempt;
+        }
+
+        @Override
+        public int attempt() {
+            return attempt;
+        }
+
+        @Override
+        public void deadLetter() {
+            deadLetters++;
         }
 
         @Override
@@ -56,7 +75,16 @@ class JobBoardTest {
     }
 
     private final List<Sent> sent = new ArrayList<>();
-    private final JobBoard board = new JobBoard(SETTINGS, (robotId, command) -> sent.add(new Sent(robotId, command)));
+    private final List<JobEvent> published = new ArrayList<>();
+    /** Whether Kafka confirms publishes; tests flip it to simulate an outage. */
+    private boolean kafkaUp = true;
+    private final JobBoard.EventPublisher publisher = (event, confirmed) -> {
+        if (kafkaUp) {
+            published.add(event);
+        }
+        confirmed.accept(kafkaUp);
+    };
+    private final JobBoard board = new JobBoard(SETTINGS, (robotId, command) -> sent.add(new Sent(robotId, command)), publisher);
     private long now = 1_000_000;
 
     {
@@ -204,7 +232,7 @@ class JobBoardTest {
 
     @Test
     void assignsNothingUntilTheFleetIsKnown() {
-        JobBoard fresh = new JobBoard(SETTINGS, (robotId, command) -> sent.add(new Sent(robotId, command)));
+        JobBoard fresh = new JobBoard(SETTINGS, (robotId, command) -> sent.add(new Sent(robotId, command)), publisher);
         fresh.onJob(new FakeDelivery("j-1", new Cell(3, 5)), now);
         fresh.onTelemetry(new RobotTelemetry("r-01", "dc1", 0, now, 2.5, 1.5, 0, 0, 90, RobotStatus.IDLE), now);
         fresh.tick(now);
@@ -274,5 +302,90 @@ class JobBoardTest {
 
         assertThat(sent).isEmpty();
         assertThat(board.snapshot().robots().getFirst().status()).isEqualTo(RobotStatus.OFFLINE);
+    }
+
+    private List<JobEventType> publishedTypes() {
+        return published.stream().map(JobEvent::type).toList();
+    }
+
+    @Test
+    void reportsEachStepAsAJobEvent() {
+        robot("r-01", 2.5, 1.5, RobotStatus.IDLE, 90);
+        job("j-1", new Cell(3, 5));
+        board.tick(now);
+        update("r-01", "j-1", RobotJobState.ACCEPTED);
+        update("r-01", "j-1", RobotJobState.PICKED);
+        update("r-01", "j-1", RobotJobState.COMPLETED);
+
+        assertThat(publishedTypes()).containsExactly(
+                JobEventType.JOB_ASSIGNED, JobEventType.JOB_PICKED, JobEventType.JOB_COMPLETED);
+        assertThat(published).allSatisfy(e -> {
+            assertThat(e.jobId()).isEqualTo("j-1");
+            assertThat(e.orderId()).isEqualTo("order-1");
+            assertThat(e.robotId()).isEqualTo("r-01");
+            assertThat(e.attempt()).isEqualTo(1);
+        });
+    }
+
+    @Test
+    void acksOnlyAfterKafkaHasTheCompletion() {
+        robot("r-01", 2.5, 1.5, RobotStatus.IDLE, 90);
+        FakeDelivery d = job("j-1", new Cell(3, 5));
+        board.tick(now);
+        update("r-01", "j-1", RobotJobState.ACCEPTED);
+
+        kafkaUp = false;
+        update("r-01", "j-1", RobotJobState.COMPLETED);
+        board.tick(now);
+        assertThat(d.acks).isZero();
+        assertThat(board.snapshot().jobs()).extracting(JobBoard.JobView::phase).containsExactly(JobBoard.Phase.FINISHING);
+
+        kafkaUp = true;
+        board.tick(now);
+        assertThat(d.acks).isEqualTo(1);
+        assertThat(publishedTypes()).endsWith(JobEventType.JOB_COMPLETED);
+    }
+
+    @Test
+    void deadLettersAJobThatIsOutOfAttempts() {
+        robot("r-01", 2.5, 1.5, RobotStatus.IDLE, 90);
+        FakeDelivery d = new FakeDelivery("j-1", new Cell(3, 5), 3);
+        board.onJob(d, now);
+        board.tick(now);
+        update("r-01", "j-1", RobotJobState.ACCEPTED);
+
+        update("r-01", "j-1", RobotJobState.FAILED);
+
+        assertThat(d.deadLetters).isEqualTo(1);
+        assertThat(d.requeues).isZero();
+        JobEvent last = published.getLast();
+        assertThat(last.type()).isEqualTo(JobEventType.JOB_DEAD_LETTERED);
+        assertThat(last.reason()).contains("attempt 3 of 3");
+    }
+
+    @Test
+    void reportsARequeue() {
+        robot("r-01", 2.5, 1.5, RobotStatus.IDLE, 90);
+        job("j-1", new Cell(3, 5));
+        board.tick(now);
+        update("r-01", "j-1", RobotJobState.ACCEPTED);
+
+        board.onStatus(new RobotStatusMessage("r-01", RobotStatus.OFFLINE, 0), now);
+
+        JobEvent last = published.getLast();
+        assertThat(last.type()).isEqualTo(JobEventType.JOB_REQUEUED);
+        assertThat(last.reason()).isEqualTo("r-01 is OFFLINE");
+    }
+
+    @Test
+    void reportsCompletionOfAJobThatFinishedWhileNoDispatcherHeldIt() {
+        robot("r-01", 2.5, 1.5, RobotStatus.IDLE, 90);
+        update("r-01", "j-1", RobotJobState.COMPLETED);
+
+        FakeDelivery d = job("j-1", new Cell(3, 5));
+
+        assertThat(d.acks).isEqualTo(1);
+        assertThat(published.getLast().type()).isEqualTo(JobEventType.JOB_COMPLETED);
+        assertThat(published.getLast().robotId()).isEqualTo("r-01");
     }
 }

@@ -1,5 +1,7 @@
 package com.warehouse.dispatcher.board;
 
+import com.warehouse.common.JobEvent;
+import com.warehouse.common.JobEventType;
 import com.warehouse.common.PickJobMessage;
 import com.warehouse.common.RobotCommand;
 import com.warehouse.common.RobotCommandType;
@@ -20,26 +22,33 @@ import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
 import java.util.TreeMap;
+import java.util.UUID;
+import java.util.function.Consumer;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 /**
  * The dispatcher's state: the pick jobs it holds and what it knows about every robot.
  * Pure logic with no I/O of its own, so it can be tested without brokers. Not thread-safe:
- * {@code DispatchLoop} calls it from one thread.
+ * {@code DispatchLoop} calls it from one thread, including the publish callbacks.
  *
- * <p>A job stays <b>unacknowledged</b> on RabbitMQ until its robot reports {@code COMPLETED}.
- * If the robot fails, goes offline or loses the job, the job is requeued and RabbitMQ delivers
- * it again (to this or another dispatcher); after the queue's delivery limit it is
- * dead-lettered. If this dispatcher dies, RabbitMQ redelivers everything it held.
+ * <p>A job stays <b>unacknowledged</b> on RabbitMQ until it is finished. If the robot fails, goes
+ * offline or loses the job, the job is requeued and RabbitMQ delivers it again (to this or another
+ * dispatcher). After {@code maxAttempts} failed attempts it is rejected to the dead-letter queue.
+ * If this dispatcher dies, RabbitMQ redelivers everything it held.
  *
  * <pre>
- *   PENDING --command sent--> ASSIGNING --ACCEPTED--> ACTIVE --COMPLETED--> ack
+ *   PENDING --command sent--> ASSIGNING --ACCEPTED--> ACTIVE --COMPLETED--> FINISHING --event confirmed--> ack
  *      ^                          |                     |
- *      +--REJECTED or timeout-----+                     +--FAILED, offline, broken, timeout--> requeue
+ *      +--REJECTED or timeout-----+                     +--failed, offline, broken, timeout--> requeue
+ *                                                                          (out of attempts: FINISHING --> dead-letter)
  * </pre>
  *
- * Robots arbitrate between dispatcher replicas: a robot takes one job and rejects the rest.
+ * Every step is reported as a {@link JobEvent}. A job is acked or dead-lettered only after
+ * Kafka has confirmed its final event, so the outcome is never lost; if the publish fails it is
+ * retried on the next tick.
+ *
+ * <p>Robots arbitrate between dispatcher replicas: a robot takes one job and rejects the rest.
  */
 public final class JobBoard {
 
@@ -49,10 +58,16 @@ public final class JobBoard {
     public interface Delivery {
         PickJobMessage job();
 
+        /** 1 on the first delivery, 2 after one requeue, and so on. */
+        int attempt();
+
         void ack();
 
         /** Return the job to the queue; it counts towards the delivery limit. */
         void requeue();
+
+        /** Reject without requeue: the broker moves it to the dead-letter queue. */
+        void deadLetter();
 
         /** False once the channel it came on has closed; the broker has then requeued it already. */
         boolean isOpen();
@@ -62,16 +77,24 @@ public final class JobBoard {
         void send(String robotId, RobotCommand command);
     }
 
+    /** Publishes job events. {@code confirmed} receives the outcome later, on the board's thread. */
+    public interface EventPublisher {
+        void publish(JobEvent event, Consumer<Boolean> confirmed);
+    }
+
     public record Settings(
             Duration assignTimeout,
             Duration jobTimeout,
             double minBattery,
             Duration staleAfter,
             Duration rejectCooldown,
-            Duration completedMemory) {
+            Duration completedMemory,
+            int maxAttempts) {
     }
 
-    public enum Phase { PENDING, ASSIGNING, ACTIVE }
+    public enum Phase { PENDING, ASSIGNING, ACTIVE, FINISHING }
+
+    private enum Outcome { ACK, DEAD_LETTER }
 
     private static final class Entry {
         final long seq;
@@ -79,6 +102,10 @@ public final class JobBoard {
         Phase phase = Phase.PENDING;
         String robotId;
         long deadline;
+        /** In FINISHING: what to do once the final event is confirmed. */
+        Outcome outcome;
+        JobEvent finalEvent;
+        boolean publishing;
 
         Entry(long seq, Delivery delivery) {
             this.seq = seq;
@@ -116,11 +143,15 @@ public final class JobBoard {
         }
     }
 
+    private record Completion(String robotId, long at) {
+    }
+
     private final Settings settings;
     private final CommandSender sender;
+    private final EventPublisher events;
     private final Map<String, Entry> jobs = new LinkedHashMap<>();
     private final Map<String, Robot> robots = new TreeMap<>();
-    private final Map<String, Long> recentlyCompleted = new LinkedHashMap<>();
+    private final Map<String, Completion> recentlyCompleted = new LinkedHashMap<>();
     private long nextSeq;
     /** No assignments before this; until MQTT has replayed the retained job states we cannot know what robots are doing. */
     private long holdUntil = Long.MAX_VALUE;
@@ -129,21 +160,18 @@ public final class JobBoard {
     private long completed;
     private long requeued;
     private long rejected;
+    private long deadLettered;
 
-    public JobBoard(Settings settings, CommandSender sender) {
+    public JobBoard(Settings settings, CommandSender sender, EventPublisher events) {
         this.settings = settings;
         this.sender = sender;
+        this.events = events;
     }
 
     // ---- inputs -------------------------------------------------------------------------
 
     public void onJob(Delivery delivery, long now) {
         String jobId = delivery.job().jobId();
-        if (recentlyCompleted.containsKey(jobId)) {
-            log.info("{} was already completed; acking the redelivery", jobId);
-            delivery.ack();
-            return;
-        }
         Entry existing = jobs.get(jobId);
         if (existing != null) {
             if (existing.delivery.isOpen()) {
@@ -155,6 +183,13 @@ public final class JobBoard {
         }
         Entry entry = new Entry(nextSeq++, delivery);
         jobs.put(jobId, entry);
+        Completion done = recentlyCompleted.get(jobId);
+        if (done != null) {
+            // Finished while no dispatcher held it (for example during a dispatcher restart).
+            log.info("{} was already completed by {}; confirming and acking", jobId, done.robotId());
+            finish(entry, Outcome.ACK, event(JobEventType.JOB_COMPLETED, entry, done.robotId(), null));
+            return;
+        }
         // Redelivered after a dispatcher died? A robot may already be on it.
         for (Robot robot : robots.values()) {
             if (jobId.equals(robot.jobId) && robot.jobState != null && robot.jobState.active() && robot.up()) {
@@ -192,7 +227,7 @@ public final class JobBoard {
         if (update == null) {
             robot.jobId = null;
             robot.jobState = null;
-            activeOn(robotId).ifPresent(e -> requeue(e, robotId + " has no job any more"));
+            activeOn(robotId).ifPresent(e -> fail(e, robotId + " has no job any more"));
             return;
         }
         if (update.state() != RobotJobState.REJECTED) {
@@ -200,17 +235,21 @@ public final class JobBoard {
             robot.jobState = update.state();
         }
         if (update.state() == RobotJobState.COMPLETED) {
-            recentlyCompleted.put(update.jobId(), now);
+            recentlyCompleted.put(update.jobId(), new Completion(robotId, now));
         }
         Entry entry = jobs.get(update.jobId());
-        if (entry == null) {
-            return; // another dispatcher's job
+        if (entry == null || entry.phase == Phase.FINISHING) {
+            return; // another dispatcher's job, or already done
         }
         switch (update.state()) {
             case ACCEPTED, PICKED -> {
                 // A down robot's retained state is stale: its job comes back to us as a redelivery.
                 if (robot.up() && (entry.phase != Phase.ACTIVE || !robotId.equals(entry.robotId))) {
                     activate(entry, robotId, now);
+                    events.publish(event(JobEventType.JOB_ASSIGNED, entry, robotId, null), ok -> { });
+                }
+                if (update.state() == RobotJobState.PICKED && robotId.equals(entry.robotId)) {
+                    events.publish(event(JobEventType.JOB_PICKED, entry, robotId, null), ok -> { });
                 }
             }
             case REJECTED -> {
@@ -221,14 +260,10 @@ public final class JobBoard {
                     coolDown(robot, now);
                 }
             }
-            case COMPLETED -> {
-                jobs.remove(update.jobId());
-                entry.delivery.ack();
-                completed++;
-            }
+            case COMPLETED -> finish(entry, Outcome.ACK, event(JobEventType.JOB_COMPLETED, entry, robotId, null));
             case FAILED -> {
                 if (robotId.equals(entry.robotId)) {
-                    requeue(entry, robotId + " failed it: " + update.reason());
+                    fail(entry, robotId + " failed it: " + update.reason());
                 }
             }
         }
@@ -243,7 +278,7 @@ public final class JobBoard {
         holdUntil = time;
     }
 
-    /** Times out stale assignments, then hands pending jobs to the nearest free robots. */
+    /** Times out stale assignments, retries unconfirmed final events, then hands pending jobs to the nearest free robots. */
     public void tick(long now) {
         for (Entry entry : List.copyOf(jobs.values())) {
             if (entry.phase == Phase.ASSIGNING && now >= entry.deadline) {
@@ -251,11 +286,13 @@ public final class JobBoard {
                 coolDown(robot(entry.robotId), now);
                 backToPending(entry);
             } else if (entry.phase == Phase.ACTIVE && now >= entry.deadline) {
-                requeue(entry, "took longer than " + settings.jobTimeout());
+                fail(entry, "took longer than " + settings.jobTimeout());
+            } else if (entry.phase == Phase.FINISHING && !entry.publishing) {
+                publishFinal(entry);
             }
         }
         long forgetBefore = now - settings.completedMemory().toMillis();
-        recentlyCompleted.values().removeIf(t -> t < forgetBefore);
+        recentlyCompleted.values().removeIf(c -> c.at() < forgetBefore);
 
         if (now < holdUntil) {
             return;
@@ -285,7 +322,7 @@ public final class JobBoard {
     private List<Robot> freeRobots(long now) {
         Set<String> taken = new HashSet<>();
         for (Entry entry : jobs.values()) {
-            if (entry.robotId != null && entry.phase != Phase.PENDING) {
+            if (entry.phase == Phase.ASSIGNING || entry.phase == Phase.ACTIVE) {
                 taken.add(entry.robotId);
             }
         }
@@ -309,11 +346,11 @@ public final class JobBoard {
         robot.status = status;
         if (status == RobotStatus.OFFLINE || status == RobotStatus.BROKEN) {
             jobs.values().stream()
-                    .filter(e -> robot.id.equals(e.robotId) && e.phase != Phase.PENDING)
+                    .filter(e -> robot.id.equals(e.robotId) && (e.phase == Phase.ASSIGNING || e.phase == Phase.ACTIVE))
                     .toList()
                     .forEach(e -> {
                         if (e.phase == Phase.ACTIVE) {
-                            requeue(e, robot.id + " is " + status);
+                            fail(e, robot.id + " is " + status);
                         } else {
                             backToPending(e);
                         }
@@ -337,11 +374,56 @@ public final class JobBoard {
         robot.cooldownUntil = now + settings.rejectCooldown().toMillis();
     }
 
-    private void requeue(Entry entry, String reason) {
+    /** An attempt failed: requeue the job, or dead-letter it when it is out of attempts. */
+    private void fail(Entry entry, String reason) {
+        int attempt = entry.delivery.attempt();
+        if (attempt >= settings.maxAttempts()) {
+            log.warn("Dead-lettering {} after {} attempts: {}", entry.job().jobId(), attempt, reason);
+            finish(entry, Outcome.DEAD_LETTER, event(JobEventType.JOB_DEAD_LETTERED, entry, entry.robotId,
+                    "%s (attempt %d of %d)".formatted(reason, attempt, settings.maxAttempts())));
+            return;
+        }
         log.info("Requeueing {}: {}", entry.job().jobId(), reason);
+        events.publish(event(JobEventType.JOB_REQUEUED, entry, entry.robotId, reason), ok -> { });
         jobs.remove(entry.job().jobId());
         entry.delivery.requeue();
         requeued++;
+    }
+
+    /** Publishes the final event; the job is settled on RabbitMQ only once Kafka has confirmed it. */
+    private void finish(Entry entry, Outcome outcome, JobEvent finalEvent) {
+        entry.phase = Phase.FINISHING;
+        entry.outcome = outcome;
+        entry.finalEvent = finalEvent;
+        publishFinal(entry);
+    }
+
+    private void publishFinal(Entry entry) {
+        entry.publishing = true;
+        events.publish(entry.finalEvent, ok -> {
+            entry.publishing = false;
+            if (!ok) {
+                log.warn("Could not publish {} for {}; retrying", entry.finalEvent.type(), entry.job().jobId());
+                return; // the next tick publishes it again
+            }
+            if (jobs.get(entry.job().jobId()) != entry) {
+                return;
+            }
+            jobs.remove(entry.job().jobId());
+            if (entry.outcome == Outcome.ACK) {
+                entry.delivery.ack();
+                completed++;
+            } else {
+                entry.delivery.deadLetter();
+                deadLettered++;
+            }
+        });
+    }
+
+    private JobEvent event(JobEventType type, Entry entry, String robotId, String reason) {
+        PickJobMessage job = entry.job();
+        return new JobEvent(UUID.randomUUID().toString(), type, job.jobId(), job.orderId(), robotId, reason,
+                entry.delivery.attempt(), System.currentTimeMillis());
     }
 
     private Optional<Entry> activeOn(String robotId) {
@@ -356,14 +438,14 @@ public final class JobBoard {
 
     // ---- read model ---------------------------------------------------------------------
 
-    public record JobView(String jobId, String orderId, Phase phase, String robotId) {
+    public record JobView(String jobId, String orderId, Phase phase, String robotId, int attempt) {
     }
 
     public record RobotView(String id, RobotStatus status, double battery, String jobId, RobotJobState jobState) {
     }
 
     public record Snapshot(Map<Phase, Long> counts, long assigned, long completed, long requeued, long rejected,
-                           List<JobView> jobs, List<RobotView> robots) {
+                           long deadLettered, List<JobView> jobs, List<RobotView> robots) {
     }
 
     public Snapshot snapshot() {
@@ -371,11 +453,11 @@ public final class JobBoard {
         List<JobView> jobViews = new ArrayList<>();
         for (Entry e : jobs.values()) {
             counts.merge(e.phase, 1L, Long::sum);
-            jobViews.add(new JobView(e.job().jobId(), e.job().orderId(), e.phase, e.robotId));
+            jobViews.add(new JobView(e.job().jobId(), e.job().orderId(), e.phase, e.robotId, e.delivery.attempt()));
         }
         List<RobotView> robotViews = robots.values().stream()
                 .map(r -> new RobotView(r.id, r.status, r.battery, r.jobId, r.jobState))
                 .toList();
-        return new Snapshot(counts, assigned, completed, requeued, rejected, jobViews, robotViews);
+        return new Snapshot(counts, assigned, completed, requeued, rejected, deadLettered, jobViews, robotViews);
     }
 }
