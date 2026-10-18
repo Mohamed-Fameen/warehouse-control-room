@@ -55,6 +55,8 @@ Run `GatewayApplication` (or add `gateway` to the compose command above). Port 8
 - `GET /api/layout`: floor plan in metres: `width`, `height`, `racks` (`x`, `y`, `width`, `height`), `chargers` and `packStations` (cells; centre at `x + 0.5`, `y + 0.5`).
 - `GET /api/robots`: current state of every robot (same shape as the snapshot below).
 - `ws://localhost:8080/ws/fleet`: `{"type":"snapshot","ts":…,"robots":[…]}` once on connect, then `{"type":"delta","ts":…,"robots":[…]}` up to 10×/s, holding only changed robots. Each robot: `id, x, y, heading, speed, battery, status, lastSeen, statusTs`. Upsert by `id`. Position fields are `null` for a robot known only from its status (for example offline before the gateway started).
+- `GET /api/orders`: the order board, newest first (same shape as the orders in the snapshot below).
+- `ws://localhost:8080/ws/orders`: `{"type":"snapshot","ts":…,"orders":[…],"removed":[]}` once on connect, then `{"type":"delta","ts":…,"orders":[…],"removed":["<orderId>",…]}` up to 10×/s. Upsert orders by `id`; drop the IDs in `removed` (the board keeps the newest 200 orders from the last 30 minutes). Each order: `id`, `status` (`NEW`, `IN_PROGRESS`, `COMPLETED`, `FAILED`), `createdAt`, `updatedAt`, `reason` (why it failed), `jobs`. Each job: `id`, `sku`, `status` (`PENDING`, `ASSIGNED`, `PICKED`, `COMPLETED`, `FAILED`), `robotId`, `reason` (why the last attempt failed). Join `robotId` with `/ws/fleet` to highlight the robot working on a job.
 
 ## Order service
 
@@ -74,8 +76,9 @@ Each order line becomes a pick job on RabbitMQ `pick-jobs` (see the queues at ht
 Port 8084, needs RabbitMQ and Mosquitto (`docker compose -f infra/compose/docker-compose.yml --profile apps up -d simulator order-service dispatcher`). Compose runs the simulator with `SIM_MODE=dispatched`, so robots wait on their chargers until the dispatcher sends them a job. Run the simulator on its own (or with `SIM_MODE=autonomous`) and robots roam at random as in Phase 1.
 
 - Takes pick jobs from RabbitMQ `pick-jobs` and sends each to the nearest free robot over MQTT `wh/{site}/robot/{id}/cmd`. Robots report progress on the retained `wh/{site}/robot/{id}/job`.
-- A job is acked only when the robot reports `COMPLETED`. Failed, offline or broken robots put their job back on the queue; after 5 deliveries it goes to `pick-jobs.dlq`.
+- A job is acked only when the robot reports `COMPLETED` and Kafka has the `JOB_COMPLETED` event. Failed, offline or broken robots put their job back on the queue; after `MAX_ATTEMPTS` (default 3) the dispatcher rejects it to `pick-jobs.dlq`.
+- Every step goes to Kafka `job.events`. The order service turns those into job and order status in Postgres and one event per change on `order.events` (`ORDER_STARTED`, `ORDER_COMPLETED`, `ORDER_FAILED`, `JOB_ASSIGNED`, … see `OrderEventType`), which feeds the gateway's order board.
 - `GET /api/dispatcher`: the jobs this replica holds and what it knows about each robot.
 - Try it: `curl -X PUT localhost:8083/api/generator -H 'content-type: application/json' -d '{"perMinute":60}'`, then `docker compose ... kill simulator` or `kill dispatcher` and watch the jobs come back.
 
-See ADR 0006.
+See ADR 0006 and ADR 0007.

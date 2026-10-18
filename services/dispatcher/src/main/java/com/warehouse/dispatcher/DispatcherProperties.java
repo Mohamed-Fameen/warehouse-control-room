@@ -16,12 +16,13 @@ public record DispatcherProperties(
         double minBattery,
         Duration staleAfter,
         Duration rejectCooldown,
-        Duration completedMemory) {
+        Duration completedMemory,
+        int maxAttempts) {
 
     public record Mqtt(String host, int port) {
     }
 
     public JobBoard.Settings boardSettings() {
-        return new JobBoard.Settings(assignTimeout, jobTimeout, minBattery, staleAfter, rejectCooldown, completedMemory);
+        return new JobBoard.Settings(assignTimeout, jobTimeout, minBattery, staleAfter, rejectCooldown, completedMemory, maxAttempts);
     }
 }

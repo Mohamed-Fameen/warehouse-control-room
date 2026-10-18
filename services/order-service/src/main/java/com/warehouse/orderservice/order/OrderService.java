@@ -73,7 +73,7 @@ public class OrderService {
                     .param("y", pick.y())
                     .param("now", Timestamp.from(now))
                     .update();
-            jobs.add(new OrderView.Job(jobId, line.sku(), line.qty(), pick, "PENDING"));
+            jobs.add(new OrderView.Job(jobId, line.sku(), line.qty(), pick, "PENDING", null, 1, null));
 
             // The job message's ID is the job ID, so a redelivered or re-sent job is recognisable.
             outbox.add(Destination.RABBIT, Queues.JOBS_EXCHANGE, Queues.PICK_ROUTING_KEY, jobId,
@@ -81,14 +81,14 @@ public class OrderService {
             UUID eventId = UUID.randomUUID();
             outbox.add(Destination.KAFKA, Topics.KAFKA_ORDER_EVENTS, orderId.toString(), eventId,
                     new OrderEvent(eventId.toString(), OrderEventType.JOB_CREATED, orderId.toString(),
-                            jobId.toString(), line.sku(), now.toEpochMilli()));
+                            jobId.toString(), line.sku(), null, null, now.toEpochMilli()));
         }
 
         UUID eventId = UUID.randomUUID();
         // Written last but relayed in ID order, so consumers see ORDER_CREATED after its JOB_CREATED events.
         outbox.add(Destination.KAFKA, Topics.KAFKA_ORDER_EVENTS, orderId.toString(), eventId,
                 new OrderEvent(eventId.toString(), OrderEventType.ORDER_CREATED, orderId.toString(),
-                        null, null, now.toEpochMilli()));
+                        null, null, null, null, now.toEpochMilli()));
         return new OrderView(orderId, "NEW", now, jobs);
     }
 
@@ -106,7 +106,8 @@ public class OrderService {
         Map<UUID, OrderView> orders = new LinkedHashMap<>();
         jdbc.sql("""
                 select o.id, o.status, o.created_at,
-                       j.id as job_id, j.sku, j.qty, j.pick_x, j.pick_y, j.status as job_status
+                       j.id as job_id, j.sku, j.qty, j.pick_x, j.pick_y, j.status as job_status,
+                       j.robot_id, j.attempt, j.reason
                 from (%s) o
                 left join pick_jobs j on j.order_id = o.id
                 order by o.created_at desc, j.created_at, j.id
@@ -123,7 +124,8 @@ public class OrderService {
                     UUID jobId = rs.getObject("job_id", UUID.class);
                     if (jobId != null) {
                         order.jobs().add(new OrderView.Job(jobId, rs.getString("sku"), rs.getInt("qty"),
-                                new Cell(rs.getInt("pick_x"), rs.getInt("pick_y")), rs.getString("job_status")));
+                                new Cell(rs.getInt("pick_x"), rs.getInt("pick_y")), rs.getString("job_status"),
+                                rs.getString("robot_id"), rs.getInt("attempt"), rs.getString("reason")));
                     }
                 });
         return List.copyOf(orders.values());

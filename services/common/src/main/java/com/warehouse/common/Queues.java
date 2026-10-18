@@ -27,6 +27,10 @@ public final class Queues {
     /** Dead-letter queue for pick jobs; the UI's DLQ panel reads it in Phase 3. */
     public static final String PICK_JOBS_DLQ = "pick-jobs.dlq";
 
-    /** After this many deliveries a pick job is dead-lettered instead of redelivered. */
+    /**
+     * After this many deliveries a pick job is dead-lettered instead of redelivered. Dispatchers
+     * dead-letter earlier on their own ({@code dispatcher.max-attempts}); this limit is the
+     * broker's backstop for jobs whose dispatcher keeps dying before it can decide.
+     */
     public static final int PICK_JOBS_DELIVERY_LIMIT = 5;
 }

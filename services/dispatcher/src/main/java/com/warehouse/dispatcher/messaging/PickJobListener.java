@@ -43,7 +43,10 @@ public class PickJobListener {
             channel.basicReject(tag, false);
             return;
         }
-        RabbitDelivery delivery = new RabbitDelivery(job, channel, tag);
+        // Quorum queues count earlier deliveries in x-delivery-count (absent on the first).
+        Object count = message.getMessageProperties().getHeader("x-delivery-count");
+        int attempt = count instanceof Number n ? n.intValue() + 1 : 1;
+        RabbitDelivery delivery = new RabbitDelivery(job, attempt, channel, tag);
         loop.submit(board -> board.onJob(delivery, System.currentTimeMillis()));
     }
 
@@ -51,16 +54,21 @@ public class PickJobListener {
      * Settles one delivery on the channel it came from. If that channel has closed in the
      * meantime, the broker has already requeued the message and the ack is simply dropped.
      */
-    private record RabbitDelivery(PickJobMessage job, Channel channel, long tag) implements JobBoard.Delivery {
+    private record RabbitDelivery(PickJobMessage job, int attempt, Channel channel, long tag) implements JobBoard.Delivery {
 
         @Override
         public void ack() {
-            settle(true);
+            settle("ack", () -> channel.basicAck(tag, false));
         }
 
         @Override
         public void requeue() {
-            settle(false);
+            settle("requeue", () -> channel.basicNack(tag, false, true));
+        }
+
+        @Override
+        public void deadLetter() {
+            settle("dead-letter", () -> channel.basicReject(tag, false));
         }
 
         @Override
@@ -68,16 +76,15 @@ public class PickJobListener {
             return channel.isOpen();
         }
 
-        private void settle(boolean ack) {
+        private interface ChannelCall {
+            void run() throws IOException;
+        }
+
+        private void settle(String what, ChannelCall call) {
             try {
-                if (ack) {
-                    channel.basicAck(tag, false);
-                } else {
-                    channel.basicNack(tag, false, true);
-                }
+                call.run();
             } catch (IOException | RuntimeException e) {
-                log.info("Could not {} {} (channel closed, the broker redelivers it): {}",
-                        ack ? "ack" : "requeue", job.jobId(), e.toString());
+                log.info("Could not {} {} (channel closed, the broker redelivers it): {}", what, job.jobId(), e.toString());
             }
         }
     }
