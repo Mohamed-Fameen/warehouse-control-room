@@ -56,3 +56,15 @@ Run `GatewayApplication` (or add `gateway` to the compose command above). Port 8
 - `GET /api/robots`: current state of every robot (same shape as the snapshot below).
 - `ws://localhost:8080/ws/fleet`: `{"type":"snapshot","ts":…,"robots":[…]}` once on connect, then `{"type":"delta","ts":…,"robots":[…]}` up to 10×/s, holding only changed robots. Each robot: `id, x, y, heading, speed, battery, status, lastSeen, statusTs`. Upsert by `id`. Position fields are `null` for a robot known only from its status (for example offline before the gateway started).
 
+## Order service
+
+Port 8083, needs Postgres, RabbitMQ and Kafka (`docker compose -f infra/compose/docker-compose.yml --profile apps up -d order-service`).
+
+```sh
+curl -X POST localhost:8083/api/orders -H 'content-type: application/json'      -d '{"lines":[{"sku":"SKU-0007","qty":2},{"sku":"SKU-0120","qty":1}]}'
+curl localhost:8083/api/orders?limit=10
+curl -X PUT localhost:8083/api/generator -H 'content-type: application/json' -d '{"perMinute":30}'
+```
+
+Each order line becomes a pick job on RabbitMQ `pick-jobs` (see the queues at http://localhost:15672). Events go to Kafka `order.events`. Both are sent through a transactional outbox, so a broker outage delays messages but never loses them. Valid SKUs are `SKU-0001` to `SKU-0256`, one per pick spot. Postgres: `localhost:5432`, database `orders`, `wcr`/`wcr`.
+
