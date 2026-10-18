@@ -1,6 +1,8 @@
 package com.warehouse.simulator.world;
 
 import com.warehouse.common.RobotStatus;
+import com.warehouse.common.layout.Cell;
+import com.warehouse.common.layout.WarehouseGrid;
 import java.util.ArrayDeque;
 import java.util.Deque;
 import java.util.List;

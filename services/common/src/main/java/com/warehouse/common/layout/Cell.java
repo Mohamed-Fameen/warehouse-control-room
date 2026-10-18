@@ -1,4 +1,4 @@
-package com.warehouse.simulator.world;
+package com.warehouse.common.layout;
 
 /** One square metre of warehouse floor. The robot stands at the cell centre. */
 public record Cell(int x, int y) {

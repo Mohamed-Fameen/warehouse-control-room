@@ -13,6 +13,26 @@ Template:
 
 ---
 
+## 2026-10-13 — services, infra — Phase 1c
+**Done:**
+- `services/gateway`: reads Kafka `robot.status` from the beginning (compacted) and `robot.telemetry` from the end, with no consumer group (every replica needs every robot). Merges both into one view per robot. Telemetry older than an `OFFLINE` status is ignored, so a clean shutdown cannot revive a robot.
+- `GET /api/layout` (floor plan in metres, racks as rectangles), `GET /api/robots`, and WebSocket `/ws/fleet`: a `snapshot` on connect, then a `delta` every 100 ms with only the robots that changed. Each robot in a delta is complete; the client upserts by `id`. Slow clients are disconnected and get a fresh snapshot when they reconnect. See ADR 0004 and the README "Gateway" section.
+- **`services/common` changed:** the warehouse layout moved from the simulator to `com.warehouse.common.layout` (`WarehouseGrid`, `Cell`, `Rect`). Simulator behaviour is unchanged.
+- **Shared infra changed:** the gateway's compose entry is wired to Kafka.
+- Measured with 20 robots: 9.6 deltas/s, about 15 KB/s per browser, telemetry age in the browser p50 76 ms, p95 108 ms.
+
+**Next:** web session: build the 3D UI against `/api/layout` and `/ws/fleet`. Services session: Phase 2a, the order service.
+**Blockers / notes:** **Contract for the web session:** the gateway message shapes in the README "Gateway" section. Position fields can be `null` for a robot known only from its status. Allowed origins default to any localhost port and must be narrowed before the public launch.
+
+## 2026-10-11 — services, infra — Phase 1b
+**Done:**
+- `services/bridge`: subscribes to `$share/bridge/wh/+/robot/+/telemetry` and `wh/+/robot/+/status`, produces to Kafka `robot.telemetry` and a new compacted `robot.status` topic, keyed by robot ID. Payloads are forwarded unparsed; the MQTT topic goes in the `mqtt_topic` header. See ADR 0003.
+- Uses clean MQTT sessions: with persistent sessions, Mosquitto kept routing a stopped replica's share of telemetry to it, and that share was lost.
+- **Shared infra changed:** `kafka-init` creates the compacted `robot.status` topic; the bridge's compose entry is wired to Mosquitto and Kafka.
+
+**Next:** Phase 1c, the gateway (Kafka to browser over WebSocket).
+**Blockers / notes:** Status changes that happen while the bridge is down are not replayed one by one; the retained MQTT status brings back the latest state on reconnect.
+
 ## 2026-10-11 — services, infra — Phase 1a
 **Done:**
 - **`services/common` changed:** added `RobotTelemetry` (robotId, site, seq, ts, x, y, heading, speed, battery, status) and `RobotStatusMessage` (robotId, status, ts) records. Units are in the Javadoc: metres from the south-west corner, radians counter-clockwise from +x, battery in percent, epoch-millisecond timestamps.
