@@ -4,9 +4,12 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.warehouse.common.OrderEvent;
+import com.warehouse.common.OrderEventType;
 import com.warehouse.common.RobotStatus;
 import com.warehouse.common.RobotTelemetry;
 import com.warehouse.gateway.fleet.FleetState;
+import com.warehouse.gateway.orders.OrderBoard;
 import java.net.URI;
 import java.util.concurrent.BlockingQueue;
 import java.util.concurrent.LinkedBlockingQueue;
@@ -31,6 +34,9 @@ class GatewayApplicationTests {
 
     @Autowired
     FleetState state;
+
+    @Autowired
+    OrderBoard orders;
 
     @Autowired
     TestRestTemplate http;
@@ -68,6 +74,42 @@ class GatewayApplicationTests {
             JsonNode r02 = delta.get("robots").get(0);
             assertThat(r02.get("x").asDouble()).isEqualTo(3.5);
             assertThat(r02.get("status").asText()).isEqualTo("MOVING");
+        } finally {
+            session.close();
+        }
+    }
+
+    @Test
+    void sendsOrderSnapshotThenDeltas() throws Exception {
+        orders.apply(new OrderEvent("e-1", OrderEventType.JOB_CREATED, "o-1", "j-1", "SKU-0001", null, null, 1_000));
+
+        BlockingQueue<String> frames = new LinkedBlockingQueue<>();
+        WebSocketSession session = new StandardWebSocketClient().execute(new TextWebSocketHandler() {
+            @Override
+            protected void handleTextMessage(WebSocketSession s, TextMessage message) {
+                frames.add(message.getPayload());
+            }
+        }, null, URI.create("ws://localhost:" + port + "/ws/orders")).get(5, TimeUnit.SECONDS);
+
+        try {
+            JsonNode snapshot = json.readTree(frames.poll(5, TimeUnit.SECONDS));
+            assertThat(snapshot.get("type").asText()).isEqualTo("snapshot");
+            assertThat(snapshot.get("orders").findValuesAsText("id")).contains("o-1");
+
+            orders.apply(new OrderEvent("e-2", OrderEventType.JOB_ASSIGNED, "o-1", "j-1", "SKU-0001", "r-07", null, 1_100));
+            long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(5);
+            JsonNode job = null;
+            while (job == null && System.nanoTime() < deadline) {
+                String frame = frames.poll(1, TimeUnit.SECONDS);
+                JsonNode node = frame == null ? null : json.readTree(frame);
+                if (node != null && node.get("type").asText().equals("delta")) {
+                    job = node.get("orders").get(0).get("jobs").get(0);
+                }
+            }
+            assertThat(job).isNotNull();
+            assertThat(job.get("status").asText()).isEqualTo("ASSIGNED");
+            assertThat(job.get("robotId").asText()).isEqualTo("r-07");
+            assertThat(json.readTree(http.getForObject("/api/orders", String.class)).get(0).get("id").asText()).isEqualTo("o-1");
         } finally {
             session.close();
         }

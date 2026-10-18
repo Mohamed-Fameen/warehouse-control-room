@@ -26,6 +26,11 @@ public final class Topics {
         return "wh/%s/robot/%s/cmd".formatted(site, robotId);
     }
 
+    /** MQTT: job progress ({@link RobotJobUpdate}), QoS 1, retained except rejections. */
+    public static String robotJob(String site, String robotId) {
+        return "wh/%s/robot/%s/job".formatted(site, robotId);
+    }
+
     /** MQTT wildcard for every robot's telemetry at a site. */
     public static String allRobotTelemetry(String site) {
         return "wh/%s/robot/+/telemetry".formatted(site);
@@ -36,11 +41,19 @@ public final class Topics {
         return "wh/%s/robot/+/status".formatted(site);
     }
 
+    /** MQTT wildcard for every robot's job progress at a site. */
+    public static String allRobotJobs(String site) {
+        return "wh/%s/robot/+/job".formatted(site);
+    }
+
     /** Kafka: robot telemetry, keyed by robot ID. */
     public static final String KAFKA_ROBOT_TELEMETRY = "robot.telemetry";
 
     /** Kafka: robot status changes, keyed by robot ID. Compacted: keeps the latest status per robot. */
     public static final String KAFKA_ROBOT_STATUS = "robot.status";
+
+    /** Kafka: job facts from dispatchers ({@link JobEvent}), keyed by order ID. Read by the order service. */
+    public static final String KAFKA_JOB_EVENTS = "job.events";
 
     /** Kafka: order domain events ({@link OrderEvent}), keyed by order ID. Written via the order service's outbox. */
     public static final String KAFKA_ORDER_EVENTS = "order.events";

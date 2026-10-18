@@ -20,3 +20,5 @@ gateway:
   kafka-enabled: true
   frame-interval: 100ms        # 10 fps to browsers
   allowed-origins: ${ALLOWED_ORIGINS:http://localhost:[*],http://127.0.0.1:[*]}
+  order-window: 30m            # order board starts this far back in order.events
+  max-orders: 200              # orders kept on the board

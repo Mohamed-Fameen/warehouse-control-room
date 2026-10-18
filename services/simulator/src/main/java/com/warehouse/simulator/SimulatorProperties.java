@@ -1,5 +1,6 @@
 package com.warehouse.simulator;
 
+import com.warehouse.simulator.world.Robot.Mode;
 import com.warehouse.simulator.world.RobotSpec;
 import java.time.Duration;
 import org.springframework.boot.context.properties.ConfigurationProperties;
@@ -8,6 +9,7 @@ import org.springframework.boot.context.properties.ConfigurationProperties;
 @ConfigurationProperties("simulator")
 public record SimulatorProperties(
         boolean enabled,
+        Mode mode,
         String site,
         int robotCount,
         long seed,

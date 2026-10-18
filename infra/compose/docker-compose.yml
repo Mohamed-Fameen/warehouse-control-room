@@ -64,6 +64,8 @@ services:
         --config cleanup.policy=compact
         && /opt/kafka/bin/kafka-topics.sh --bootstrap-server kafka:29092
         --create --if-not-exists --topic order.events --partitions 6 --replication-factor 1
+        && /opt/kafka/bin/kafka-topics.sh --bootstrap-server kafka:29092
+        --create --if-not-exists --topic job.events --partitions 6 --replication-factor 1
     restart: "no"
 
   rabbitmq:
@@ -117,6 +119,7 @@ services:
     environment:
       MQTT_HOST: mosquitto
       ROBOT_COUNT: ${ROBOT_COUNT:-20}
+      SIM_MODE: ${SIM_MODE:-dispatched}   # robots wait for the dispatcher; "autonomous" to roam alone
     depends_on:
       mosquitto:
         condition: service_healthy
@@ -159,7 +162,20 @@ services:
     profiles: ["apps"]
     build: { context: ../../services, dockerfile: dispatcher/Dockerfile }
     ports: ["8084:8084"]
-    depends_on: [rabbitmq, mosquitto]
+    environment:
+      MQTT_HOST: mosquitto
+      RABBITMQ_HOST: rabbitmq
+      RABBITMQ_USER: ${RABBITMQ_USER:-wcr}
+      RABBITMQ_PASSWORD: ${RABBITMQ_PASSWORD:-wcr}
+      KAFKA_BOOTSTRAP_SERVERS: kafka:29092
+      MAX_ATTEMPTS: ${MAX_ATTEMPTS:-3}
+    depends_on:
+      mosquitto:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+      kafka-init:
+        condition: service_completed_successfully
 
   gateway:
     profiles: ["apps"]
