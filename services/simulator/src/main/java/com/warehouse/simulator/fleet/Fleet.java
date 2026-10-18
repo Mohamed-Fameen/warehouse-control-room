@@ -50,12 +50,12 @@ public class Fleet implements SmartLifecycle {
             Cell dock = grid.chargers().get(i);
             chargers.reserve(dock);
             double battery = 40 + random.nextDouble() * 60;
-            Robot robot = new Robot(id, dock, battery, grid, chargers, spec, random);
+            Robot robot = new Robot(id, dock, battery, grid, chargers, spec, random, props.mode());
             threads.add(Thread.ofVirtual().name("robot-" + id).start(new RobotRunner(robot, props, json)));
         }
         running = true;
-        log.info("Started {} robots at site {} -> mqtt://{}:{}",
-                props.robotCount(), props.site(), props.mqtt().host(), props.mqtt().port());
+        log.info("Started {} {} robots at site {} -> mqtt://{}:{}",
+                props.robotCount(), props.mode(), props.site(), props.mqtt().host(), props.mqtt().port());
     }
 
     @Override
